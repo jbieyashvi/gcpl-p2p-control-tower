@@ -1,7 +1,7 @@
 // Reusable UI primitives. All colours come from tokens in src/index.css.
 import { clsx } from 'clsx'
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, FlaskConical, Info, Loader2, X, type LucideIcon } from 'lucide-react'
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type ReactNode, type RefObject, type SelectHTMLAttributes } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 
 export const cx = clsx
@@ -375,27 +375,72 @@ export function Tabs<T extends string>({ value, onChange, tabs, label }: { value
 }
 
 // ── Drawer & Modal ─────────────────────────────────────────────────────────
-function useEscape(onClose: () => void) {
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const topDialog = (except?: Element) => [...document.querySelectorAll<HTMLElement>('[aria-modal="true"]')].filter((d) => d !== except).at(-1)
+/**
+ * Modal focus handling for the topmost dialog only (so a form opened over a drawer owns Escape and Tab):
+ * moves focus in on open, traps Tab, closes on Escape, and on close returns focus to whatever opened it
+ * (or to the dialog underneath when that element is gone). Mount only while open.
+ */
+function useDialogFocus(ref: RefObject<HTMLDivElement | null>, onClose: () => void) {
+  // Captured during the first render, before child autoFocus moves focus into the dialog.
+  const [returnTo] = useState(() => (typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null)))
+  const close = useRef(onClose)
+  // First element focused inside (e.g. an autoFocus button), so a re-run effect (StrictMode) lands there again.
+  const initial = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', k)
-    return () => document.removeEventListener('keydown', k)
+    close.current = onClose
   }, [onClose])
-}
-export function Drawer({ open, onClose, title, subtitle, children, width = 520, footer }: { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; width?: number; footer?: ReactNode }) {
-  useEscape(onClose)
-  const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    if (open) ref.current?.focus()
-  }, [open])
-  if (!open) return null
+    const el = ref.current
+    if (!el) return
+    if (el.contains(document.activeElement)) initial.current ??= document.activeElement as HTMLElement
+    else (initial.current?.isConnected ? initial.current : el).focus({ preventScroll: true })
+    const onKey = (e: KeyboardEvent) => {
+      if (topDialog() !== el) return
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        close.current()
+      } else if (e.key === 'Tab') {
+        const items = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.getClientRects().length > 0)
+        if (!items.length) return e.preventDefault()
+        const first = items[0]
+        const last = items[items.length - 1]
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === el)) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      const target = returnTo?.isConnected && returnTo !== document.body ? returnTo : topDialog(el)
+      target?.focus({ preventScroll: true })
+    }
+  }, [ref, returnTo])
+}
+
+type DrawerProps = { open: boolean; onClose: () => void; title: ReactNode; subtitle?: ReactNode; children: ReactNode; width?: number; footer?: ReactNode }
+export function Drawer(props: DrawerProps) {
+  return props.open ? <DrawerSurface {...props} /> : null
+}
+function DrawerSurface({ onClose, title, subtitle, children, width = 520, footer }: DrawerProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  useDialogFocus(ref, onClose)
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/25" onClick={onClose} aria-hidden />
-      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Details'} className="relative flex h-full max-w-full flex-col bg-surface shadow-2xl outline-none" style={{ width }}>
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="relative flex h-full max-w-full flex-col bg-surface shadow-2xl outline-none" style={{ width }}>
         <div className="flex items-start justify-between gap-2 border-b border-line px-3.5 py-2">
           <div className="min-w-0">
-            <h2 className="text-title font-semibold">{title}</h2>
+            <h2 id={titleId} className="text-title font-semibold">
+              {title}
+            </h2>
             {subtitle && <div className="text-label text-ink-subtle">{subtitle}</div>}
           </div>
           <IconButton icon={X} label="Close" onClick={onClose} />
@@ -406,15 +451,23 @@ export function Drawer({ open, onClose, title, subtitle, children, width = 520, 
     </div>
   )
 }
-export function Modal({ open, onClose, title, children, footer, width = 480 }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }) {
-  useEscape(onClose)
-  if (!open) return null
+
+type ModalProps = { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; width?: number }
+export function Modal(props: ModalProps) {
+  return props.open ? <ModalSurface {...props} /> : null
+}
+function ModalSurface({ onClose, title, children, footer, width = 480 }: ModalProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const titleId = useId()
+  useDialogFocus(ref, onClose)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} aria-hidden />
-      <div role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : 'Dialog'} className="relative max-h-[90vh] w-full overflow-y-auto rounded-lg bg-surface shadow-2xl" style={{ maxWidth: width }}>
+      <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className="relative max-h-[90vh] w-full overflow-y-auto rounded-lg bg-surface shadow-2xl outline-none" style={{ maxWidth: width }}>
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-title font-semibold">{title}</h2>
+          <h2 id={titleId} className="text-title font-semibold">
+            {title}
+          </h2>
           <IconButton icon={X} label="Close" onClick={onClose} />
         </div>
         <div className="p-4">{children}</div>

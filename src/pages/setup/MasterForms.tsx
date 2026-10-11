@@ -1,6 +1,6 @@
 // Validated maintenance forms for master data. All saves are local to this browser (demo).
 import { useState, type FormEvent, type ReactNode } from 'react'
-import type { CalendarException, CodeMapping, DT, OperatingCalendar, Parameter, Sku, Vendor } from '@/data/types'
+import type { CalendarException, CodeMapping, DT, OperatingCalendar, Parameter, Sku, Vendor, VendorSkuMap } from '@/data/types'
 import type { Dataset } from '@/data/dataset'
 import { Button, Modal } from '@/components/ui'
 import { Check, EMAIL_RE, Field, diffSummary, hasErrors, inputCls, num, positiveInt, required, saveMaster, type Errors } from './shared'
@@ -267,51 +267,69 @@ export function VendorModal({ ds, vendor, onClose }: { ds: Dataset; vendor: Vend
 }
 
 // ── Vendor ↔ SKU relationship ──────────────────────────────────────────────
-export function RelationModal({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
+/** Add a vendor–SKU relationship (optionally for a preset vendor), or edit an existing one's date and role. */
+export function RelationModal({ ds, onClose, vendorId, map }: { ds: Dataset; onClose: () => void; vendorId?: string; map?: VendorSkuMap }) {
   const [f, setF] = useState({
-    vendorId: ds.vendors[0]?.id ?? '',
-    skuCode: '',
-    since: '2026-10-09',
-    primary: false,
+    vendorId: map?.vendorId ?? vendorId ?? ds.vendors[0]?.id ?? '',
+    skuCode: map?.skuCode ?? '',
+    since: map?.since ?? '2026-10-09',
+    primary: map?.primary ?? false,
   })
   const [err, setErr] = useState<Errors>({})
+  const v = ds.idx.vendor.get(f.vendorId)
   const submit = () => {
     const e: Errors = {
-      skuCode: !ds.idx.sku.has(f.skuCode) ? 'Choose an existing FG SKU.' : ds.vendorSkuMaps.some((m) => m.vendorId === f.vendorId && m.skuCode === f.skuCode) ? 'This vendor is already mapped to that SKU.' : undefined,
+      skuCode: map ? undefined : !ds.idx.sku.has(f.skuCode) ? 'Choose an existing FG SKU.' : ds.vendorSkuMaps.some((m) => m.vendorId === f.vendorId && m.skuCode === f.skuCode) ? 'This vendor is already mapped to that SKU.' : undefined,
       since: /^\d{4}-\d{2}-\d{2}$/.test(f.since) ? undefined : 'Enter a valid date.',
     }
     setErr(e)
     if (hasErrors(e)) return
-    const v = ds.idx.vendor.get(f.vendorId)!
-    saveMaster((m) => ({ ...m, vendorSkuMaps: [...m.vendorSkuMaps, { ...f }] }), 'Added vendor–SKU relationship', `${v.name} → ${f.skuCode}`, f.primary ? 'Primary' : 'Secondary')
+    if (map) {
+      const role = (p: boolean) => (p ? 'Primary' : 'Secondary')
+      saveMaster(
+        (m) => ({ ...m, vendorSkuMaps: m.vendorSkuMaps.map((x) => (x.vendorId === map.vendorId && x.skuCode === map.skuCode ? { ...x, since: f.since, primary: f.primary } : x)) }),
+        'Edited vendor–SKU relationship',
+        `${v?.name} → ${map.skuCode}`,
+        diffSummary({ since: map.since, role: role(map.primary) }, { since: f.since, role: role(f.primary) }, { since: 'Since', role: 'Role' }),
+      )
+    } else saveMaster((m) => ({ ...m, vendorSkuMaps: [...m.vendorSkuMaps, { ...f }] }), 'Added vendor–SKU relationship', `${v?.name} → ${f.skuCode}`, f.primary ? 'Primary' : 'Secondary')
     onClose()
   }
+  const sku = ds.idx.sku.get(f.skuCode)
   return (
-    <FormModal title="Add vendor–SKU relationship" onClose={onClose} onSubmit={submit} width={560}>
+    <FormModal title={map ? 'Edit vendor–SKU relationship' : 'Add vendor–SKU relationship'} onClose={onClose} onSubmit={submit} width={560}>
       <Field label="Vendor">
-        <select className={inputCls} value={f.vendorId} onChange={(e) => setF({ ...f, vendorId: e.target.value })}>
-          {ds.vendors.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name} ({v.code})
+        <select className={inputCls} value={f.vendorId} disabled={!!(map || vendorId)} onChange={(e) => setF({ ...f, vendorId: e.target.value })}>
+          {ds.vendors.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.name} ({x.code})
             </option>
           ))}
         </select>
       </Field>
       <Field label="FG SKU" error={err.skuCode}>
-        <select className={inputCls} value={f.skuCode} onChange={(e) => setF({ ...f, skuCode: e.target.value })}>
-          <option value="">Select SKU…</option>
-          {ds.skus.map((s) => (
-            <option key={s.code} value={s.code}>
-              {s.code} · {s.name}
+        {map ? (
+          <select className={inputCls} value={f.skuCode} disabled>
+            <option value={f.skuCode}>
+              {f.skuCode} · {sku?.name ?? 'Unknown SKU'}
             </option>
-          ))}
-        </select>
+          </select>
+        ) : (
+          <select className={inputCls} value={f.skuCode} onChange={(e) => setF({ ...f, skuCode: e.target.value })}>
+            <option value="">Select SKU…</option>
+            {ds.skus.map((s) => (
+              <option key={s.code} value={s.code}>
+                {s.code} · {s.name}
+              </option>
+            ))}
+          </select>
+        )}
       </Field>
       <Field label="Since" error={err.since}>
         <input className={inputCls} type="date" value={f.since} onChange={(e) => setF({ ...f, since: e.target.value })} />
       </Field>
       <div className="flex items-end pb-1.5">
-        <Check label="Primary source" checked={f.primary} onChange={(v) => setF({ ...f, primary: v })} />
+        <Check label="Primary source" checked={f.primary} onChange={(p) => setF({ ...f, primary: p })} />
       </div>
     </FormModal>
   )

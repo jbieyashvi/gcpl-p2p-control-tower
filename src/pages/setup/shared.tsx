@@ -1,6 +1,6 @@
 // Small form + table helpers shared by the Master Data and Administration pages.
 import { Search } from 'lucide-react'
-import { cloneElement, isValidElement, useId, useState, type ReactElement, type ReactNode } from 'react'
+import { cloneElement, isValidElement, useId, useState, type ReactElement, type ReactNode, type Ref } from 'react'
 import type { ActivityEntry } from '@/data/types'
 import type { MasterTables } from '@/data/dataset'
 import { Button, Modal, cx, td } from '@/components/ui'
@@ -100,12 +100,12 @@ export function Check({ label, checked, onChange, disabled, title }: { label: Re
   )
 }
 
-export function SearchBox({ value, onChange, label, placeholder, className }: { value: string; onChange: (v: string) => void; label: string; placeholder?: string; className?: string }) {
+export function SearchBox({ value, onChange, label, placeholder, className, inputRef }: { value: string; onChange: (v: string) => void; label: string; placeholder?: string; className?: string; inputRef?: Ref<HTMLInputElement> }) {
   return (
     <label className={cx('relative inline-flex items-center', className)}>
       <span className="sr-only">{label}</span>
       <Search size={14} className="pointer-events-none absolute left-2 text-ink-subtle" aria-hidden />
-      <input type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={cx(inputCls, 'pl-7')} />
+      <input ref={inputRef} type="search" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={cx(inputCls, 'pl-7')} />
     </label>
   )
 }

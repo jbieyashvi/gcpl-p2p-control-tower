@@ -219,7 +219,7 @@ export function HierarchyTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean })
 
       {view === 'tree' ? (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <Card bodyClass="p-2" title="Product hierarchy" subtitle="Category → Brand → Product line → DT → SKU · counts are SKUs">
+          <Card bodyClass="p-2" title="Hierarchy tree" subtitle="Category → Brand → Product line → DT → SKU · counts are SKUs">
             {visible.length === 0 ? (
               <EmptyState title="No matches">Nothing in the hierarchy matches “{query}”. Try a SKU code, DT code or part of a product name.</EmptyState>
             ) : (

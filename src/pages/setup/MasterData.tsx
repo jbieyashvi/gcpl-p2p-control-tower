@@ -1,46 +1,68 @@
 import { FlaskConical, Lock, Pencil, Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
-import { Navigate, useNavigate, useParams } from 'react-router-dom'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
+import { Navigate, useParams } from 'react-router-dom'
 import type { CodeMapping, OperatingCalendar, Parameter, Sku, Vendor } from '@/data/types'
 import type { Dataset } from '@/data/dataset'
-import { AssumptionNote, Badge, Button, Callout, Card, EmptyState, IconButton, LocalFilters, PageHeader, Pager, Select, TableWrap, Tabs, cx, td, tdNum, th } from '@/components/ui'
+import { AssumptionNote, Badge, Button, Callout, Card, CellText, Drawer, EmptyState, HelpTip, IconButton, LocalFilters, Loading, PageHeader, Pager, Select, TableWrap, cx, td, tdNum, th } from '@/components/ui'
 import { fmtDate, fmtDow } from '@/lib/dates'
 import { usePageFilters } from '@/lib/filters'
 import { fmtNum } from '@/lib/format'
 import { useAppState, useDataset, usePermissions } from '@/lib/store'
 import { MASTER_SECTIONS, masterPath, type MasterSection } from '@/app/nav'
 import { HierarchyTab } from './HierarchyTab'
-import { CalExceptionModal, CalendarModal, CodeMappingModal, ParamModal, RelationModal, SkuModal, VendorModal } from './MasterForms'
+import { CalExceptionModal, CalendarModal, CodeMappingModal, ParamModal, SkuModal, VendorModal } from './MasterForms'
 import { ActivityRows, SearchBox, saveMaster, useConfirm, usePaged } from './shared'
 
+const VendorSkuList = lazy(() => import('./VendorSkuList'))
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+const SUBTITLE: Record<MasterSection, string> = {
+  'product-hierarchy': 'Categories, brands and FG SKUs with their attributes',
+  vendors: 'Contract manufacturers and the SKUs they produce',
+  'uom-conversions': 'Case packs and weights used to convert between EA, CS and MT',
+  'operating-calendars': 'Weekly operating patterns assigned to vendors. Non-operating days show as “Non-operating day”, never as missing or zero.',
+  'calendar-exceptions': 'Holidays, shutdowns and extra working days that override the weekly pattern',
+  'code-mappings': 'Translate vendor item codes in incoming reports to FG codes. Unmapped codes are excluded at upload with a warning.',
+  parameters: 'Thresholds used by statuses and exception rules. All are provisional pending business confirmation.',
+  'change-history': 'Local demo log of every master data change made in this browser',
+}
+
+// Primary “Add …” page action per section (shown only to personas that can edit).
+const ADD_LABEL: Partial<Record<MasterSection, string>> = {
+  vendors: 'Add vendor',
+  'operating-calendars': 'Add calendar',
+  'calendar-exceptions': 'Add exception',
+  'code-mappings': 'Add mapping',
+}
 
 export default function MasterData() {
   usePageFilters([])
   const ds = useDataset()
   const { can } = usePermissions()
   const canEdit = can('masterData.edit')
-  const history = useAppState((s) => s.activity).filter((a) => a.area === 'Master data')
-  // The section lives in the URL (/master-data/<slug>) so sidebar links, tabs, refresh and Back/Forward agree.
-  const navigate = useNavigate()
+  const [adding, setAdding] = useState<MasterSection | null>(null)
+  // The section lives in the URL (/master-data/<slug>); the sidebar is the section navigation.
   const { section } = useParams()
-  const tab = MASTER_SECTIONS.find((m) => m.slug === section)?.slug
-  if (!tab) return <Navigate to={masterPath(MASTER_SECTIONS[0].slug)} replace />
-  const counts: Partial<Record<MasterSection, number>> = {
-    'product-hierarchy': ds.skus.length,
-    vendors: ds.vendors.length,
-    'operating-calendars': ds.calendars.length,
-    'calendar-exceptions': ds.calendarExceptions.length,
-    'code-mappings': ds.codeMappings.length,
-    parameters: ds.parameters.length,
-    'change-history': history.length,
-  }
+  const current = MASTER_SECTIONS.find((m) => m.slug === section)
+  if (!current) return <Navigate to={masterPath(MASTER_SECTIONS[0].slug)} replace />
+  const tab = current.slug
 
   return (
     <div>
       <PageHeader
-        title="Master data"
-        subtitle="Product hierarchy, vendors and their SKU relationships, conversions, calendars, code mappings and parameters"
+        back={
+          <nav aria-label="Breadcrumb" className="mb-1">
+            <ol className="flex items-center gap-1 text-label text-ink-subtle">
+              <li>Master Data</li>
+              <li aria-hidden>/</li>
+              <li aria-current="page" className="text-ink-muted">
+                {current.label}
+              </li>
+            </ol>
+          </nav>
+        }
+        title={current.label}
+        subtitle={SUBTITLE[tab]}
         actions={
           <>
             {!canEdit && (
@@ -48,17 +70,23 @@ export default function MasterData() {
                 Read-only for this persona
               </Badge>
             )}
+            {canEdit && ADD_LABEL[tab] && (
+              <Button variant="primary" icon={Plus} onClick={() => setAdding(tab)}>
+                {ADD_LABEL[tab]}
+              </Button>
+            )}
           </>
         }
-      />
-      <div className="mb-3">
-        <Callout tone="info" icon={FlaskConical}>
-          Edits are stored only in this browser for the demo and immediately recalculate the demo dataset. Nothing is written to any GCPL system. Use “Reset demo” in the top bar to restore fixtures.
-        </Callout>
-      </div>
-      <div className="scroll-thin mb-3 overflow-x-auto">
-        <Tabs label="Master data sections" value={tab} onChange={(v) => navigate(masterPath(v))} tabs={MASTER_SECTIONS.map((m) => ({ value: m.slug, label: m.tab, count: counts[m.slug] }))} />
-      </div>
+      >
+        <div className="mt-2 flex items-center gap-1 text-dense text-ink-muted">
+          <FlaskConical size={14} className="shrink-0 text-ink-subtle" aria-hidden />
+          Demo changes are saved in this browser only
+          <HelpTip label="About demo changes">
+            Edits are stored only in this browser for the demo and immediately recalculate the demo dataset. Nothing is written to any GCPL system, and other people and browsers do not see your changes. Use “Reset demo” in the top bar to
+            restore the original fixtures.
+          </HelpTip>
+        </div>
+      </PageHeader>
       {tab === 'product-hierarchy' && <HierarchyTab ds={ds} canEdit={canEdit} />}
       {tab === 'vendors' && <VendorsTab ds={ds} canEdit={canEdit} />}
       {tab === 'uom-conversions' && <UomTab ds={ds} canEdit={canEdit} />}
@@ -67,149 +95,121 @@ export default function MasterData() {
       {tab === 'code-mappings' && <CodesTab ds={ds} canEdit={canEdit} />}
       {tab === 'parameters' && <ParamsTab ds={ds} canEdit={canEdit} />}
       {tab === 'change-history' && <HistoryTab />}
+      {adding === 'vendors' && <VendorModal ds={ds} vendor={null} onClose={() => setAdding(null)} />}
+      {adding === 'operating-calendars' && <CalendarModal ds={ds} cal={null} onClose={() => setAdding(null)} />}
+      {adding === 'calendar-exceptions' && <CalExceptionModal ds={ds} onClose={() => setAdding(null)} />}
+      {adding === 'code-mappings' && <CodeMappingModal ds={ds} mapping={null} onClose={() => setAdding(null)} />}
     </div>
   )
 }
 
 function VendorsTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
-  const [edit, setEdit] = useState<Vendor | 'new' | null>(null)
-  const [addRel, setAddRel] = useState(false)
-  const { ask, dialog } = useConfirm()
+  const [edit, setEdit] = useState<Vendor | null>(null)
+  const [q, setQ] = useState('')
+  const [skuVendor, setSkuVendor] = useState<string | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const needle = q.trim().toLowerCase()
+  const rows = needle ? ds.vendors.filter((v) => [v.name, v.code, v.location].some((x) => x.toLowerCase().includes(needle))) : ds.vendors
+  const drawerVendor = skuVendor ? ds.idx.vendor.get(skuVendor) : undefined
+  const closeDrawer = useCallback(() => setSkuVendor(null), [])
   return (
     <div className="space-y-3">
-      <Card
-        bodyClass="p-0"
-        title="Vendors"
-        subtitle="Contract manufacturers in the demo dataset"
-        actions={
-          canEdit && (
-            <Button size="sm" variant="primary" icon={Plus} onClick={() => setEdit('new')}>
-              Add vendor
-            </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SearchBox inputRef={searchRef} className="w-[320px] max-w-full" value={q} onChange={setQ} label="Search vendors" placeholder="Search vendors by name, code or location" />
+        <p className="text-dense text-ink-muted" aria-live="polite">
+          {needle ? `${rows.length} of ${ds.vendors.length} vendors` : `${ds.vendors.length} vendors`}
+        </p>
+      </div>
+      <Card bodyClass="p-0">
+        {rows.length === 0 ? (
+          needle ? (
+            <EmptyState
+              title={`No vendors match “${q.trim()}”`}
+              action={
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setQ('')
+                    searchRef.current?.focus()
+                  }}
+                >
+                  Reset search
+                </Button>
+              }
+            >
+              Search looks at vendor name, code and location.
+            </EmptyState>
+          ) : (
+            <EmptyState title="No vendors yet">{canEdit ? 'Use “Add vendor” to create the first one.' : 'Vendors appear here once they are added.'}</EmptyState>
           )
-        }
-      >
-        <TableWrap>
-          <table className="w-full border-separate border-spacing-0">
-            <thead>
-              <tr>
-                <th className={th}>Vendor</th>
-                <th className={th}>Code</th>
-                <th className={th}>Location</th>
-                <th className={th}>Calendar</th>
-                <th className={th}>Report sender (demo)</th>
-                <th className={cx(th, 'text-right')}>SKUs</th>
-                {canEdit && (
-                  <th className={th}>
-                    <span className="sr-only">Actions</span>
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {ds.vendors.map((v) => (
-                <tr key={v.id} className="hover:bg-surface-muted/60">
-                  <td className={cx(td, 'font-medium')}>{v.name}</td>
-                  <td className={cx(td, 'font-mono text-dense')}>{v.code}</td>
-                  <td className={td}>{v.location}</td>
-                  <td className={td}>{ds.calendars.find((c) => c.id === v.calendarId)?.name ?? v.calendarId}</td>
-                  <td className={cx(td, 'text-dense text-ink-muted')}>{v.reportEmail}</td>
-                  <td className={tdNum}>{ds.idx.vendorSkus.get(v.id)?.length ?? 0}</td>
+        ) : (
+          <TableWrap>
+            <table className="w-full border-separate border-spacing-0">
+              <caption className="sr-only">Vendors</caption>
+              <thead>
+                <tr>
+                  <th className={th}>Vendor</th>
+                  <th className={th}>Code</th>
+                  <th className={th}>Location</th>
+                  <th className={th}>Calendar</th>
+                  <th className={th}>Report sender (demo)</th>
+                  <th className={cx(th, 'text-right')}>SKUs</th>
                   {canEdit && (
-                    <td className={td}>
-                      <IconButton icon={Pencil} label={`Edit ${v.name}`} onClick={() => setEdit(v)} />
-                    </td>
+                    <th className={th}>
+                      <span className="sr-only">Actions</span>
+                    </th>
                   )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
-      </Card>
-
-      <Card
-        bodyClass="p-0"
-        title="Vendor–SKU relationships"
-        subtitle="A SKU can be produced by several vendors. Relationships drive which vendor/SKU pairs appear in analysis."
-        actions={
-          canEdit && (
-            <Button size="sm" icon={Plus} onClick={() => setAddRel(true)}>
-              Add relationship
-            </Button>
-          )
-        }
-      >
-        <TableWrap maxHeight={420}>
-          <table className="w-full border-separate border-spacing-0">
-            <thead>
-              <tr>
-                <th className={th}>Vendor</th>
-                <th className={th}>SKU</th>
-                <th className={th}>Since</th>
-                <th className={th}>Role</th>
-                <th className={th}>Other vendors for SKU</th>
-                {canEdit && (
-                  <th className={th}>
-                    <span className="sr-only">Actions</span>
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {ds.vendorSkuMaps.map((m) => {
-                const v = ds.idx.vendor.get(m.vendorId)
-                const s = ds.idx.sku.get(m.skuCode)
-                const others = (ds.idx.skuVendors.get(m.skuCode) ?? []).filter((x) => x !== m.vendorId)
-                return (
-                  <tr key={`${m.vendorId}|${m.skuCode}`} className="hover:bg-surface-muted/60">
-                    <td className={cx(td, 'whitespace-nowrap')}>{v?.name ?? m.vendorId}</td>
-                    <td className={td}>
-                      {s?.name ?? <span className="text-bad">Unknown SKU</span>} <span className="font-mono text-label text-ink-subtle">{m.skuCode}</span>
-                    </td>
-                    <td className={cx(td, 'num whitespace-nowrap')}>{fmtDate(m.since, true)}</td>
-                    <td className={td}>
-                      <Badge tone={m.primary ? 'accent' : 'none'}>{m.primary ? 'Primary' : 'Secondary'}</Badge>
-                    </td>
-                    <td className={cx(td, 'text-ink-muted')}>{others.map((o) => ds.idx.vendor.get(o)?.name).join(', ') || '—'}</td>
-                    {canEdit && (
-                      <td className={td}>
-                        <IconButton
-                          icon={Trash2}
-                          label={`Remove relationship ${v?.name} → ${m.skuCode}`}
-                          onClick={() =>
-                            ask({
-                              title: 'Remove vendor–SKU relationship?',
-                              confirmLabel: 'Remove relationship',
-                              body: (
-                                <p>
-                                  <span className="font-medium">{v?.name}</span> will no longer be linked to <span className="font-medium">{s?.name ?? m.skuCode}</span> ({m.skuCode}). The pair drops out of analysis
-                                  {ds.codeMappings.some((c) => c.vendorId === m.vendorId && c.skuCode === m.skuCode) ? ' and its code mappings will show “No vendor relationship”' : ''}.
-                                </p>
-                              ),
-                              onConfirm: () =>
-                                saveMaster(
-                                  (mt) => ({
-                                    ...mt,
-                                    vendorSkuMaps: mt.vendorSkuMaps.filter((x) => !(x.vendorId === m.vendorId && x.skuCode === m.skuCode)),
-                                  }),
-                                  'Removed vendor–SKU relationship',
-                                  `${v?.name} → ${m.skuCode}`,
-                                ),
-                            })
-                          }
-                        />
+              </thead>
+              <tbody>
+                {rows.map((v) => {
+                  const n = ds.idx.vendorSkus.get(v.id)?.length ?? 0
+                  const cal = ds.calendars.find((c) => c.id === v.calendarId)?.name ?? v.calendarId
+                  return (
+                    <tr key={v.id} className="hover:bg-surface-muted/60">
+                      <td className={cx(td, 'font-medium whitespace-nowrap text-ink')}>{v.name}</td>
+                      <td className={cx(td, 'font-mono text-label text-ink-subtle')}>{v.code}</td>
+                      <td className={cx(td, 'text-ink-muted')}>
+                        <CellText text={v.location} className="max-w-[200px]" />
                       </td>
-                    )}
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </TableWrap>
+                      <td className={cx(td, 'text-ink-muted')}>
+                        <CellText text={cal} className="max-w-[170px]" />
+                      </td>
+                      <td className={cx(td, 'text-ink-muted')}>
+                        <CellText text={v.reportEmail} className="max-w-[190px]" />
+                      </td>
+                      <td className={cx(tdNum, 'py-0')}>
+                        <button
+                          type="button"
+                          aria-haspopup="dialog"
+                          aria-label={`${n} SKU${n === 1 ? '' : 's'} for ${v.name}: view relationships`}
+                          onClick={() => setSkuVendor(v.id)}
+                          className="num inline-flex h-7 min-w-8 items-center justify-end rounded px-1.5 font-medium text-accent-ink underline decoration-accent/40 underline-offset-2 hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-accent"
+                        >
+                          {n}
+                        </button>
+                      </td>
+                      {canEdit && (
+                        <td className={cx(td, 'w-px py-0')}>
+                          <IconButton icon={Pencil} label={`Edit ${v.name}`} onClick={() => setEdit(v)} />
+                        </td>
+                      )}
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </TableWrap>
+        )}
       </Card>
-      {edit && <VendorModal ds={ds} vendor={edit === 'new' ? null : edit} onClose={() => setEdit(null)} />}
-      {addRel && <RelationModal ds={ds} onClose={() => setAddRel(false)} />}
-      {dialog}
+      <Drawer open={!!drawerVendor} onClose={closeDrawer} width={640} title={drawerVendor?.name ?? ''} subtitle={drawerVendor && `${drawerVendor.code} · ${drawerVendor.location} · SKU relationships`}>
+        {drawerVendor && (
+          <Suspense fallback={<Loading label="Loading SKU relationships…" />}>
+            <VendorSkuList ds={ds} vendorId={drawerVendor.id} canEdit={canEdit} />
+          </Suspense>
+        )}
+      </Drawer>
+      {edit && <VendorModal ds={ds} vendor={edit} onClose={() => setEdit(null)} />}
     </div>
   )
 }
@@ -295,20 +295,9 @@ function UomTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
 }
 
 function CalendarsTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
-  const [edit, setEdit] = useState<OperatingCalendar | 'new' | null>(null)
+  const [edit, setEdit] = useState<OperatingCalendar | null>(null)
   return (
-    <Card
-      bodyClass="p-0"
-      title="Operating calendars"
-      subtitle="Non-operating days are shown as “Non-operating day”, never as missing or zero"
-      actions={
-        canEdit && (
-          <Button size="sm" variant="primary" icon={Plus} onClick={() => setEdit('new')}>
-            Add calendar
-          </Button>
-        )
-      }
-    >
+    <Card bodyClass="p-0">
       <TableWrap>
         <table className="w-full border-separate border-spacing-0">
           <thead>
@@ -351,28 +340,16 @@ function CalendarsTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
           </tbody>
         </table>
       </TableWrap>
-      {edit && <CalendarModal ds={ds} cal={edit === 'new' ? null : edit} onClose={() => setEdit(null)} />}
+      {edit && <CalendarModal ds={ds} cal={edit} onClose={() => setEdit(null)} />}
     </Card>
   )
 }
 
 function CalExTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
-  const [add, setAdd] = useState(false)
   const rows = [...ds.calendarExceptions].sort((a, b) => a.date.localeCompare(b.date))
   const { ask, dialog } = useConfirm()
   return (
-    <Card
-      bodyClass="p-0"
-      title="Calendar exceptions"
-      subtitle="Holidays, shutdowns and extra working days that override the weekly pattern"
-      actions={
-        canEdit && (
-          <Button size="sm" variant="primary" icon={Plus} onClick={() => setAdd(true)}>
-            Add exception
-          </Button>
-        )
-      }
-    >
+    <Card bodyClass="p-0">
       {rows.length === 0 ? (
         <EmptyState title="No calendar exceptions" />
       ) : (
@@ -436,14 +413,13 @@ function CalExTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
           </table>
         </TableWrap>
       )}
-      {add && <CalExceptionModal ds={ds} onClose={() => setAdd(false)} />}
       {dialog}
     </Card>
   )
 }
 
 function CodesTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
-  const [edit, setEdit] = useState<CodeMapping | 'new' | null>(null)
+  const [edit, setEdit] = useState<CodeMapping | null>(null)
   const [vendor, setVendor] = useState('')
   const rows = ds.codeMappings.filter((c) => !vendor || c.vendorId === vendor)
   const { ask, dialog } = useConfirm()
@@ -459,18 +435,7 @@ function CodesTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
           ))}
         </Select>
       </LocalFilters>
-      <Card
-        bodyClass="p-0"
-        title="Vendor code mappings"
-        subtitle="Translate vendor item codes in incoming reports to FG codes. Unmapped codes are excluded at upload with a warning."
-        actions={
-          canEdit && (
-            <Button size="sm" variant="primary" icon={Plus} onClick={() => setEdit('new')}>
-              Add mapping
-            </Button>
-          )
-        }
-      >
+      <Card bodyClass="p-0">
         {rows.length === 0 ? (
           <EmptyState title="No mappings for this vendor" />
         ) : (
@@ -544,7 +509,7 @@ function CodesTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
           </TableWrap>
         )}
       </Card>
-      {edit && <CodeMappingModal ds={ds} mapping={edit === 'new' ? null : edit} onClose={() => setEdit(null)} />}
+      {edit && <CodeMappingModal ds={ds} mapping={edit} onClose={() => setEdit(null)} />}
       {dialog}
     </div>
   )
@@ -553,7 +518,7 @@ function CodesTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
 function ParamsTab({ ds, canEdit }: { ds: Dataset; canEdit: boolean }) {
   const [edit, setEdit] = useState<Parameter | null>(null)
   return (
-    <Card bodyClass="p-0" title="Parameters" subtitle="Thresholds used by statuses and exception rules. All are provisional pending business confirmation.">
+    <Card bodyClass="p-0">
       <TableWrap>
         <table className="w-full border-separate border-spacing-0">
           <thead>
@@ -614,12 +579,12 @@ function HistoryTab() {
       <LocalFilters>
         <SearchBox className="w-[280px]" value={q} onChange={setQ} label="Search change history" placeholder="Search change history…" />
       </LocalFilters>
-      <Card bodyClass="p-0" title="Master data change history" subtitle="Local demo log of every maintenance change in this browser">
+      <Card bodyClass="p-0">
         {rows.length === 0 ? (
           q ? (
             <EmptyState title="No changes match">Clear the search to see all recorded changes.</EmptyState>
           ) : (
-            <EmptyState title="No changes recorded">Changes made in the other tabs appear here with who, when and what changed.</EmptyState>
+            <EmptyState title="No changes recorded">Changes made in the other sections appear here with who, when and what changed.</EmptyState>
           )
         ) : (
           <>
